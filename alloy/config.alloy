@@ -1,0 +1,103 @@
+// =============================================================================
+//  config.alloy — Configuration Grafana Alloy pour le lab tutorial-environment
+//
+//  Alloy remplace ici DEUX agents historiques :
+//    1. Promtail   -> collecte des logs et envoi vers Loki
+//    2. Le scraping interne de Prometheus -> collecte des métriques et envoi
+//       vers Prometheus via remote_write
+//
+//  Le langage de configuration s'appelle "River". Une conf Alloy est un graphe
+//  de "composants" : chaque composant a un TYPE (ex: prometheus.scrape), un
+//  LABEL (ex: "tns_app"), des arguments en entrée, et des champs exportés en
+//  sortie que l'on branche sur d'autres composants via `forward_to`.
+// =============================================================================
+
+
+// =============================================================================
+//  PARTIE 1 — LOGS  (remplace Promtail)
+// =============================================================================
+
+// ---- 1.1 Découverte des fichiers de logs à suivre --------------------------
+local.file_match "varlogs" {
+  // path_targets : liste de "cibles". Chaque cible est un dictionnaire de
+  // labels. Les clés spéciales commencent par "__".
+  path_targets = [{
+    // __path__ : motif glob des fichiers à suivre. On reproduit exactement le
+    // comportement par défaut de Promtail (tail de tous les *.log de /var/log).
+    __path__ = "/var/log/*log",
+    // job : label métier attaché à chaque ligne de log. On garde "varlogs"
+    // pour que les requêtes existantes {job="varlogs"} continuent de marcher.
+    job      = "varlogs",
+  }]
+}
+
+// ---- 1.2 Lecture (tail) des fichiers découverts ----------------------------
+loki.source.file "varlogs" {
+  // On branche la sortie du composant de découverte ci-dessus en entrée.
+  targets    = local.file_match.varlogs.targets
+  // forward_to : où envoyer les lignes lues. Ici vers notre writer Loki.
+  forward_to = [loki.write.default.receiver]
+}
+
+// ---- 1.3 Écriture vers Loki ------------------------------------------------
+loki.write "default" {
+  endpoint {
+    // Endpoint de push de Loki. "loki" = nom du service dans docker-compose,
+    // résolu par le DNS interne du réseau Docker "grafana".
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+
+// =============================================================================
+//  PARTIE 2 — MÉTRIQUES  (remplace le scraping de Prometheus)
+// =============================================================================
+
+// ---- 2.1 Scrape de l'application TNS ---------------------------------------
+prometheus.scrape "tns_app" {
+  targets = [
+    // __address__ : hôte:port à scraper. Le chemin par défaut est /metrics.
+    // job : reproduit le job_name "tns_app" du prometheus.yml d'origine.
+    { __address__ = "app:80", job = "tns_app" },
+  ]
+  // Override de l'intervalle global, comme dans le prometheus.yml (5s).
+  scrape_interval = "5s"
+  // Les métriques scrapées sont transmises au composant remote_write.
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// ---- 2.2 Scrape de Prometheus lui-même -------------------------------------
+prometheus.scrape "prometheus" {
+  targets = [
+    // Dans le prometheus.yml d'origine la cible était "localhost:9090" car
+    // Prometheus se scrapait lui-même. Ici c'est Alloy qui scrape Prometheus,
+    // donc on utilise le nom de service Docker "prometheus".
+    { __address__ = "prometheus:9090", job = "prometheus" },
+  ]
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.default.receiver]
+}
+
+// ---- 2.3 Scrape du serveur Tomcat (via le JMX Prometheus Exporter) ---------
+// NOUVELLE ROUTE ajoutée dans le cadre du TP Tomcat (voir TP-TOMCAT.md).
+// Tomcat n'expose pas de métriques Prometheus nativement : un "javaagent" JMX
+// Exporter tourne DANS la JVM de Tomcat et publie /metrics sur le port 9404.
+// Alloy le scrape par le réseau Docker "grafana" (aucun volume partagé requis).
+// prometheus.scrape "tomcat" {
+//   targets = [
+//     // "tomcat" = nom du conteneur lancé en `docker run --name tomcat`, résolu
+//     // par le DNS du réseau Docker. 9404 = port du JMX Exporter.
+//     { __address__ = "tomcat:9404", job = "tomcat" },
+//   ]
+//   scrape_interval = "10s"
+//   forward_to      = [prometheus.remote_write.default.receiver]
+// }
+
+// ---- 2.4 Envoi des métriques vers Prometheus (remote_write) ----------------
+prometheus.remote_write "default" {
+  endpoint {
+    // Endpoint de réception remote-write de Prometheus. Nécessite le flag
+    // --web.enable-remote-write-receiver côté Prometheus (voir docker-compose).
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}

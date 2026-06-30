@@ -1,0 +1,45 @@
+# =============================================================================
+#  config.yaml — Règles du JMX Prometheus Exporter pour Tomcat
+#
+#  Le JMX Exporter est un "javaagent" greffé dans la JVM de Tomcat. Il lit les
+#  MBeans JMX exposés par Tomcat/Catalina et les traduit en métriques au format
+#  Prometheus, servies sur http://<host>:9404/metrics.
+#
+#  Chaque "rule" : un motif (pattern) qui matche un nom de MBean JMX, et la
+#  manière de le transformer en nom de métrique Prometheus + labels.
+# =============================================================================
+
+# Met les noms de métriques en minuscules (convention Prometheus).
+lowercaseOutputName: true
+# Met les noms de labels en minuscules également.
+lowercaseOutputLabelNames: true
+
+rules:
+  # --- Compteurs globaux par connecteur (requêtes, erreurs, octets, latence) ---
+  # MBean : Catalina:type=GlobalRequestProcessor,name="http-nio-8080"
+  - pattern: 'Catalina<type=GlobalRequestProcessor, name="(\w+-\w+)-(\d+)"><>(requestCount|errorCount|bytesSent|bytesReceived|processingTime):'
+    name: tomcat_$3_total          # ex: tomcat_requestcount_total
+    type: COUNTER
+    labels:
+      protocol: "$1"               # ex: http-nio
+      port: "$2"                   # ex: 8080
+
+  # --- Sessions HTTP par application (context) ---
+  # MBean : Catalina:type=Manager,host=localhost,context=/monappli
+  - pattern: 'Catalina<type=Manager, host=([-a-zA-Z0-9+&@#/%?=~_|!:.,;]*), context=([-a-zA-Z0-9+/]*)><>(activeSessions|sessionCounter|expiredSessions|rejectedSessions):'
+    name: tomcat_session_$3         # ex: tomcat_session_activesessions
+    labels:
+      host: "$1"
+      context: "$2"                 # ex: /monappli
+
+  # --- Pool de threads par connecteur ---
+  # MBean : Catalina:type=ThreadPool,name="http-nio-8080"
+  - pattern: 'Catalina<type=ThreadPool, name="(\w+-\w+)-(\d+)"><>(currentThreadCount|currentThreadsBusy|maxThreads|connectionCount):'
+    name: tomcat_threadpool_$3      # ex: tomcat_threadpool_currentthreadsbusy
+    labels:
+      protocol: "$1"
+      port: "$2"
+
+  # --- Mémoire JVM (heap) — MBeans standard de la JVM ---
+  - pattern: 'java.lang<type=Memory><HeapMemoryUsage>(\w+):'
+    name: jvm_memory_heap_$1        # ex: jvm_memory_heap_used
