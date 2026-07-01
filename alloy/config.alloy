@@ -62,6 +62,7 @@ prometheus.scrape "tns_app" {
   ]
   // Override de l'intervalle global, comme dans le prometheus.yml (5s).
   scrape_interval = "5s"
+  scrape_timeout = "5s"
   // Les métriques scrapées sont transmises au composant remote_write.
   forward_to = [prometheus.remote_write.default.receiver]
 }
