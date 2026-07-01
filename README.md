@@ -18,3 +18,7 @@ To start the sample application and the supporting services:
 ```
 docker-compose up -d
 ```
+
+## Note
+You might need to **chmod +x /app/app** if :
+docker logs <Grafana-alloy-app-container-name>  returns /bin/bash app : Permission Denied
